@@ -28,3 +28,6 @@ sudo bash /tmp/***name_script.sh***
 	 - & "$env:TEMP\Windows11Cleanup.ps1"
 	- C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /shutdown
  - Logon to the console of the GNS3 server and browse to the location of the linked clone file of the template VM. The folder is located in /opt/gns3/projects/***project_id***/project-files/***vm_id***/.
+ - Execute the following command to convert the linked image to a GNS3 template:
+	 - sudo qemu-img convert -O qcow2 hda_disk.qcow2 /opt/gns3/images/QEMU/***NameTemplate.qcow2***
+  - Create a template in GNS3 to test this template.
