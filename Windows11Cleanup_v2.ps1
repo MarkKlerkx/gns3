@@ -1,30 +1,20 @@
 <#
 .SYNOPSIS
-    This script aggressively optimizes a Windows 10/11 installation for use as a
-    virtualization template, focusing on minimal disk footprint and background activity.
+    This is the definitive, all-in-one script to aggressively optimize a Windows
+    installation for use as a virtualization template. It includes a robust method
+    for removing bloatware to prevent Sysprep validation errors.
     It must be run as an Administrator.
-
-.DESCRIPTION
-    The script performs the following actions:
-    1. Disables unnecessary services, features, and scheduled tasks.
-    2. Sets the Page File to a fixed, smaller size (1 GB).
-    3. Applies various registry tweaks to disable telemetry and improve performance.
-    4. Removes a comprehensive list of built-in 'bloatware' apps.
-    5. Clears temporary files, caches, and event logs.
-    6. Performs a deep system cleanup using DISM and enables CompactOS.
-    7. Zero-fills free disk space using SDelete for virtualization efficiency.
 #>
 
 # Step 0: Check for Administrator privileges
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Warning "This script must be run as an Administrator."
-    Write-Host "Right-click the script file and select 'Run with PowerShell as administrator'."
     Read-Host "Press Enter to exit."
     Exit
 }
 
 # Start of the script
-Write-Host "Starting the Windows AGGRESSIVE Optimization Script..." -ForegroundColor Green
+Write-Host "Starting the Definitive Windows Optimization Script..." -ForegroundColor Green
 Write-Host "======================================================="
 
 # --- Section 1: System Tweaks & Service Disabling ---
@@ -80,16 +70,15 @@ Get-ScheduledTask -TaskPath "\Microsoft\Windows\Customer Experience Improvement 
 Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\*" | Disable-ScheduledTask -ErrorAction SilentlyContinue
 Get-ScheduledTask -TaskPath "\Microsoft\Windows\DiskDiagnostic\*" | Disable-ScheduledTask -ErrorAction SilentlyContinue
 
-# --- Section 2: Component & Bloatware Removal ---
-Write-Host "Section 2: Removing Unnecessary Components" -ForegroundColor Cyan
+# --- Section 2: Robust Bloatware Removal ---
+Write-Host "Section 2: Performing Robust Bloatware Removal" -ForegroundColor Cyan
 
-# Step 2.1: Remove built-in 'Bloatware' Apps
-# Sla de huidige instelling voor de progress bar op
+# Step 2.1: Thoroughly remove built-in 'Bloatware' Apps
 $OriginalProgressPreference = $ProgressPreference
-# Schakel de progress bars tijdelijk uit om het 'hangen' van de console te voorkomen
 $ProgressPreference = 'SilentlyContinue'
 
-Write-Host "  - Step 2.1: Removing built-in 'Bloatware' Apps..." -ForegroundColor Yellow
+Write-Host "  - Step 2.1: Thoroughly removing built-in 'Bloatware' Apps to prevent Sysprep errors..." -ForegroundColor Yellow
+
 $BloatwareApps = @(
     "Microsoft.549981C3F5F10", "Microsoft.BingNews", "Microsoft.BingWeather", 
     "Microsoft.GetHelp", "Microsoft.Getstarted", "Microsoft.Microsoft3DViewer", 
@@ -102,19 +91,15 @@ $BloatwareApps = @(
 )
 
 foreach ($App in $BloatwareApps) {
-    # Voeg eigen feedback toe, zodat je ziet wat er gebeurt
-    Write-Host "    - Attempting to remove package matching '$App'..." -ForegroundColor Gray
-    
-    # Verwijder het geïnstalleerde pakket voor alle gebruikers
-    Get-AppxPackage -AllUsers -Name $App | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-    
-    # Verwijder het 'provisioned' pakket zodat het niet terugkomt voor nieuwe gebruikers
+    Write-Host "    - Thoroughly cleaning package matching '$App'..." -ForegroundColor Gray
+    # Force removal for all users
+    Get-AppxPackage -Name $App -AllUsers | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+    # Force removal of the provisioned package
     Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $App } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
 }
 
-# Herstel de originele instelling voor de progress bar
 $ProgressPreference = $OriginalProgressPreference
-Write-Host "  - Bloatware removal process completed." -ForegroundColor Green
+Write-Host "  - Robust bloatware removal process completed." -ForegroundColor Green
 
 
 # --- Section 3: Deep System & File Cleanup ---
@@ -168,6 +153,6 @@ Remove-Item -Path $sdeletePath -Force
 
 # --- Completion ---
 Write-Host "======================================================="
-Write-Host "AGGRESSIVE optimization complete!" -ForegroundColor Green
+Write-Host "DEFINITIVE optimization complete!" -ForegroundColor Green
 Write-Host "The system is now prepared for Sysprep."
 Read-Host "Press Enter to close this window."
