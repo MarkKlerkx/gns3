@@ -7,7 +7,7 @@
 	 - Limited experience
 	 - Customize experience: Skip
  - Open Powershell ISE with "*Open as Administrator*"
- - Execute the following commands in Powershell:
+ - Go to the Github page of this tutorial and copy and execute the following PowerShell commands:
 	 - Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force 
 	 - Invoke-WebRequest -Uri "https://raw.githubusercontent.com/MarkKlerkx/gns3/main/Windows11Cleanup.ps1" -OutFile "$env:TEMP\Windows11Cleanup.ps1"
 	 - & "$env:TEMP\Windows11Cleanup.ps1"
