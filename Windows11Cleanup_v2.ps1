@@ -1,18 +1,18 @@
 <#
 .SYNOPSIS
-    This script optimizes a Windows 11 installation by removing unnecessary files,
-    disabling features, and reducing the overall disk footprint.
+    This script aggressively optimizes a Windows 10/11 installation for use as a
+    virtualization template, focusing on minimal disk footprint and background activity.
     It must be run as an Administrator.
 
 .DESCRIPTION
     The script performs the following actions:
-    1. Disables the Hibernation feature (removes hiberfil.sys).
+    1. Disables unnecessary services, features, and scheduled tasks.
     2. Sets the Page File to a fixed, smaller size (1 GB).
-    3. Disables System Restore and removes existing restore points.
-    4. Permanently disables the Windows Update service and clears its cache.
-    5. Removes a list of common 'bloatware' apps.
-    6. Performs a deep system cleanup using DISM.
-    7. Compresses the operating system files using CompactOS.
+    3. Applies various registry tweaks to disable telemetry and improve performance.
+    4. Removes a comprehensive list of built-in 'bloatware' apps.
+    5. Clears temporary files, caches, and event logs.
+    6. Performs a deep system cleanup using DISM and enables CompactOS.
+    7. Zero-fills free disk space using SDelete for virtualization efficiency.
 #>
 
 # Step 0: Check for Administrator privileges
@@ -24,74 +24,150 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 # Start of the script
-Write-Host "Starting the Windows 11 Optimization Script..." -ForegroundColor Green
+Write-Host "Starting the Windows AGGRESSIVE Optimization Script..." -ForegroundColor Green
 Write-Host "======================================================="
 
-# --- Section 1: System Tweaks ---
-
-Write-Host "Section 1: Applying System Tweaks" -ForegroundColor Cyan
+# --- Section 1: System Tweaks & Service Disabling ---
+Write-Host "Section 1: Applying System Tweaks and Disabling Services" -ForegroundColor Cyan
 
 # Step 1.1: Disable Hibernation
-Write-Host "  - Step 1.1: Disabling Hibernation (removing hiberfil.sys)..." -ForegroundColor Yellow
+Write-Host "  - Step 1.1: Disabling Hibernation..." -ForegroundColor Yellow
 powercfg /h off
 
 # Step 1.2: Set a fixed Page File size
-Write-Host "  - Step 1.2: Setting Page File (pagefile.sys) to a fixed size of 1024 MB..." -ForegroundColor Yellow
-# First, disable automatic management
+Write-Host "  - Step 1.2: Setting Page File to a fixed size of 1024 MB..." -ForegroundColor Yellow
 $ComputerSystem = Get-CimInstance -ClassName Win32_ComputerSystem
 $ComputerSystem.AutomaticManagedPagefile = $false
 Set-CimInstance -InputObject $ComputerSystem
-
-# Now, find any existing page file setting
 $PageFile = Get-CimInstance -ClassName Win32_PageFileSetting | Select-Object -First 1
-
-if ($PageFile) {
-    # If a setting exists, modify it
-    Set-CimInstance -InputObject $PageFile -Property @{InitialSize = 1024; MaximumSize = 1024}
-} else {
-    # If no setting exists, create a new one
-    Set-CimInstance -ClassName Win32_PageFileSetting -Property @{Name="C:\pagefile.sys"; InitialSize = 1024; MaximumSize = 1024}
-}
+if ($PageFile) { Set-CimInstance -InputObject $PageFile -Property @{InitialSize = 1024; MaximumSize = 1024} } 
+else { Set-CimInstance -ClassName Win32_PageFileSetting -Property @{Name="C:\pagefile.sys"; InitialSize = 1024; MaximumSize = 1024} }
 
 # Step 1.3: Disable System Restore
 Write-Host "  - Step 1.3: Disabling System Restore..." -ForegroundColor Yellow
 Disable-ComputerRestore -Drive "C:\"
 
-# Step 1.4: Disable Windows Update
-Write-Host "  - Step 1.4: Disabling Windows Update service..." -ForegroundColor Yellow
-# Stop the service first
-Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
-# Set the service to Disabled
-Set-Service -Name wuauserv -StartupType Disabled
+# Step 1.4: Disable Core Unnecessary Services
+Write-Host "  - Step 1.4: Disabling core unnecessary services (Updates, Search, SysMain)..." -ForegroundColor Yellow
+Set-Service -Name wuauserv -StartupType Disabled; Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+Set-Service -Name SysMain -StartupType Disabled; Stop-Service -Name SysMain -Force -ErrorAction SilentlyContinue
+Set-Service -Name WSearch -StartupType Disabled; Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue
 
-# For good measure, set the policy in the registry as well
-$RegistryPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
-if (-NOT (Test-Path $RegistryPath)) {
-    New-Item -Path $RegistryPath -Force | Out-Null
+# Step 1.5: Disable Telemetry and Diagnostics Services
+Write-Host "  - Step 1.5: Disabling Telemetry and Diagnostics services..." -ForegroundColor Yellow
+Set-Service -Name DiagTrack -StartupType Disabled; Stop-Service -Name DiagTrack -Force -ErrorAction SilentlyContinue
+Set-Service -Name dmwappushservice -StartupType Disabled; Stop-Service -Name dmwappushservice -Force -ErrorAction SilentlyContinue
+
+# Step 1.6: Disable Windows Defender
+Write-Host "  - Step 1.6: Disabling Windows Defender..." -ForegroundColor Yellow
+$DefenderRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
+if (-NOT (Test-Path $DefenderRegPath)) { New-Item -Path $DefenderRegPath -Force | Out-Null }
+Set-ItemProperty -Path $DefenderRegPath -Name DisableAntiSpyware -Value 1 -Type DWord -Force
+try { Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop } catch { Write-Warning "Could not disable real-time monitoring. Tamper Protection may be enabled." }
+
+# Step 1.7: Apply Registry Tweaks
+Write-Host "  - Step 1.7: Applying Registry Tweaks for performance and privacy..." -ForegroundColor Yellow
+$TelemetryPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
+if (-NOT (Test-Path $TelemetryPath)) { New-Item -Path $TelemetryPath -Force | Out-Null }
+Set-ItemProperty -Path $TelemetryPath -Name "AllowTelemetry" -Value 0 -Type DWord -Force
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Value 2 -Force
+Set-ItemProperty -Path "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SubscribedContent-310093Enabled" -Value 0 -Force
+
+# Step 1.8: Disable Unnecessary Scheduled Tasks
+Write-Host "  - Step 1.8: Disabling unnecessary Scheduled Tasks..." -ForegroundColor Yellow
+Get-ScheduledTask -TaskName 'ScheduledDefrag' | Disable-ScheduledTask -ErrorAction SilentlyContinue
+Get-ScheduledTask -TaskPath "\Microsoft\Windows\Customer Experience Improvement Program\*" | Disable-ScheduledTask -ErrorAction SilentlyContinue
+Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\*" | Disable-ScheduledTask -ErrorAction SilentlyContinue
+Get-ScheduledTask -TaskPath "\Microsoft\Windows\DiskDiagnostic\*" | Disable-ScheduledTask -ErrorAction SilentlyContinue
+
+# --- Section 2: Component & Bloatware Removal ---
+Write-Host "Section 2: Removing Unnecessary Components" -ForegroundColor Cyan
+
+# Step 2.1: Remove built-in 'Bloatware' Apps
+# Sla de huidige instelling voor de progress bar op
+$OriginalProgressPreference = $ProgressPreference
+# Schakel de progress bars tijdelijk uit om het 'hangen' van de console te voorkomen
+$ProgressPreference = 'SilentlyContinue'
+
+Write-Host "  - Step 2.1: Removing built-in 'Bloatware' Apps..." -ForegroundColor Yellow
+$BloatwareApps = @(
+    "Microsoft.549981C3F5F10", "Microsoft.BingNews", "Microsoft.BingWeather", 
+    "Microsoft.GetHelp", "Microsoft.Getstarted", "Microsoft.Microsoft3DViewer", 
+    "Microsoft.MicrosoftOfficeHub", "Microsoft.MicrosoftSolitaireCollection", 
+    "Microsoft.MixedReality.Portal", "Microsoft.Office.OneNote", "Microsoft.People", 
+    "Microsoft.Print3D", "Microsoft.SkypeApp", "Microsoft.ScreenSketch", "Microsoft.Wallet", 
+    "Microsoft.WindowsAlarms", "Microsoft.WindowsCommunicationsApps", 
+    "Microsoft.WindowsFeedbackHub", "Microsoft.WindowsMaps", "Microsoft.WindowsSoundRecorder", 
+    "Microsoft.Xbox.*", "Microsoft.YourPhone", "Microsoft.ZuneMusic", "Microsoft.ZuneVideo"
+)
+
+foreach ($App in $BloatwareApps) {
+    # Voeg eigen feedback toe, zodat je ziet wat er gebeurt
+    Write-Host "    - Attempting to remove package matching '$App'..." -ForegroundColor Gray
+    
+    # Verwijder het geïnstalleerde pakket voor alle gebruikers
+    Get-AppxPackage -AllUsers -Name $App | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+    
+    # Verwijder het 'provisioned' pakket zodat het niet terugkomt voor nieuwe gebruikers
+    Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $App } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
 }
-Set-ItemProperty -Path $RegistryPath -Name NoAutoUpdate -Value 1 -Force
 
-# Step 1.5: Clear the Windows Update cache
-Write-Host "  - Step 1.5: Clearing the Windows Update cache (SoftwareDistribution)..." -ForegroundColor Yellow
-$UpdateCachePath = "C:\Windows\SoftwareDistribution\Download"
-if (Test-Path $UpdateCachePath) {
-    Remove-Item -Path "$UpdateCachePath\*" -Recurse -Force -ErrorAction SilentlyContinue
-}
+# Herstel de originele instelling voor de progress bar
+$ProgressPreference = $OriginalProgressPreference
+Write-Host "  - Bloatware removal process completed." -ForegroundColor Green
 
-# --- Section 3: Deep System Cleanup ---
 
-Write-Host "Section 3: Performing Deep System Cleanup" -ForegroundColor Cyan
+# --- Section 3: Deep System & File Cleanup ---
+Write-Host "Section 3: Performing Deep System and File Cleanup" -ForegroundColor Cyan
 
-# Step 3.1: Clean up Component Store (WinSxS) with DISM
-Write-Host "  - Step 3.1: Cleaning up the Component Store (WinSxS) with DISM (this may take a while)..." -ForegroundColor Yellow
+# Step 3.1: Clear Caches and Temp Files
+Write-Host "  - Step 3.1: Clearing all caches and temp files..." -ForegroundColor Yellow
+Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+
+# Step 3.2: Clean up Component Store (WinSxS) with DISM
+Write-Host "  - Step 3.2: Cleaning up the Component Store (WinSxS) with DISM (this may take a while)..." -ForegroundColor Yellow
 DISM.exe /Online /Cleanup-Image /StartComponentCleanup /ResetBase
 
-# Step 3.2: Enable CompactOS
-Write-Host "  - Step 3.2: Enabling CompactOS to compress system files..." -ForegroundColor Yellow
+# Step 3.3: Enable CompactOS
+Write-Host "  - Step 3.3: Enabling CompactOS to compress system files..." -ForegroundColor Yellow
 compact.exe /CompactOS:always
+
+# Step 3.4: Final Cleanup Actions
+Write-Host "  - Step 3.4: Performing final cleanup actions (Event Logs, DNS, Recycle Bin)..." -ForegroundColor Yellow
+wevtutil.exe el | ForEach-Object { wevtutil.exe cl "$_" }
+Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+Clear-DnsClientCache
+
+
+# --- Section 4: Finalization with SDelete ---
+Write-Host "Section 4: Zero-filling free space for optimal VM performance" -ForegroundColor Cyan
+
+# Step 4.1: Download SDelete
+Write-Host "  - Step 4.1: Downloading SDelete from GitHub..." -ForegroundColor Yellow
+$sdeleteUrl = "https://raw.githubusercontent.com/MarkKlerkx/gns3/main/sdelete64.exe"
+$sdeletePath = Join-Path $env:TEMP "sdelete64.exe"
+try {
+    Invoke-WebRequest -Uri $sdeleteUrl -OutFile $sdeletePath -ErrorAction Stop
+    Write-Host "    SDelete downloaded successfully." -ForegroundColor Green
+} catch {
+    Write-Error "Failed to download SDelete. Please check the URL and your internet connection."
+    Read-Host "Press Enter to exit."
+    Exit
+}
+
+# Step 4.2: Run SDelete
+Write-Host "  - Step 4.2: Running SDelete to zero-fill free space. THIS WILL TAKE A LONG TIME." -ForegroundColor Magenta
+& $sdeletePath -accepteula -z C:
+
+# Step 4.3: Clean up SDelete executable
+Write-Host "  - Step 4.3: Cleaning up SDelete..." -ForegroundColor Yellow
+Remove-Item -Path $sdeletePath -Force
+
 
 # --- Completion ---
 Write-Host "======================================================="
-Write-Host "Optimization complete!" -ForegroundColor Green
-Write-Host "A system restart is recommended for all changes to take effect."
+Write-Host "AGGRESSIVE optimization complete!" -ForegroundColor Green
+Write-Host "The system is now prepared for Sysprep."
 Read-Host "Press Enter to close this window."
