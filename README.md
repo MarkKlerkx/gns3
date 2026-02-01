@@ -7,6 +7,7 @@ The following scripts can be executed with following commands:
 -   setup_gns3_backup.sh
 -   gns3_restore.sh
 -   gns3_monitor.sh
+-   UbuntuCleanup.sh
 
 In the commands below, replace ***name_script.sh*** with the name of the real script.
 
