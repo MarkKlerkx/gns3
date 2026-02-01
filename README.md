@@ -31,6 +31,7 @@ sudo bash /tmp/***name_script.sh***
 	 - Invoke-WebRequest -Uri "https://raw.githubusercontent.com/MarkKlerkx/gns3/main/Windows11Cleanup.ps1" -OutFile "$env:TEMP\Windows11Cleanup.ps1"
 	 - & "$env:TEMP\Windows11Cleanup.ps1"
 	- C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /shutdown
+ 		- When the OOBE fails, a couple of packages has to be uninstalled: Get-AppxPackage | Where-Object {$_.PackageFullName -like "*ID_NUMMER*"} | Remove-AppxPackage -ErrorAction SilentlyContinue 
  - Logon to the console of the GNS3 server and browse to the location of the linked clone file of the template VM. The folder is located in /opt/gns3/projects/***project_id***/project-files/***vm_id***/.
  - Execute the following command to convert the linked image to a GNS3 template:
 	 - sudo qemu-img convert -O qcow2 hda_disk.qcow2 /opt/gns3/images/QEMU/***NameTemplate.qcow2***
