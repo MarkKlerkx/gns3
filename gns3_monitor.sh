@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- CONFIGURATION ---
-CONFIG_FILE="$HOME/.gns3_student_email"
+CONFIG_FILE="/home/gns3/.gns3_student_email"
 RELAY="smtp.educloud.fontysict.nl"
 FROM="noreply@fontysict.nl"
 PROJECTS_DIR="/opt/gns3/projects"
