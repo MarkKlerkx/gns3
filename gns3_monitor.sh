@@ -1,26 +1,33 @@
 #!/bin/bash
 
 # --- CONFIGURATION ---
+# Zorg dat alle commando's gevonden worden, ook via cron
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 CONFIG_FILE="/home/gns3/.gns3_student_email"
 RELAY="smtp.educloud.fontysict.nl"
 FROM="noreply@fontysict.nl"
 PROJECTS_DIR="/opt/gns3/projects"
+LOG_FILE="/var/log/gns3_disk_monitor.log"
 THRESHOLD=90 # Alert bij 90% gebruik
 
 # --- 1. STUDENT EMAIL CHECK & VALIDATION ---
-# Check of bestand bestaat en NIET leeg is (-s)
-if [ ! -s "$CONFIG_FILE" ]; then
-    echo "Geen e-mailadres gevonden of bestand is leeg."
-    echo "Voer een student e-mailadres in voor rapportage:"
+# Check of we interactief zijn (gebruiker achter toetsenbord)
+if [ ! -s "$CONFIG_FILE" ] && [ -t 0 ]; then
+    echo "Geen e-mailadres gevonden. Voer student e-mailadres in voor rapportage:"
     read student_email
-    # Simpele validatie voor de interactieve input
-    if [[ "$student_email" == *"@*"* ]]; then
+    if [[ "$student_email" == *"@fontysict.nl"* ]]; then
         echo "$student_email" > "$CONFIG_FILE"
-        echo "E-mailadres opgeslagen."
+        echo "$(date): E-mailadres ingesteld op $student_email" >> "$LOG_FILE"
     else
-        echo "Ongeldig formaat. Script stopt om CPU-loop te voorkomen."
+        echo "Ongeldig formaat. Script stopt."
         exit 1
     fi
+fi
+
+# Als bestand nog steeds leeg/niet aanwezig is (bijv. in cron), stop dan direct.
+if [ ! -s "$CONFIG_FILE" ]; then
+    echo "$(date): FOUT - Geen e-mailadres geconfigureerd in $CONFIG_FILE. Script gestopt." >> "$LOG_FILE"
+    exit 0 # Exit 0 om herhaalde foutmeldingen in cron-mail te voorkomen
 fi
 
 EMAIL=$(cat "$CONFIG_FILE" | tr -d '[:space:]')
@@ -69,35 +76,44 @@ REPORT_SUMMARY="\n================================\n"
 REPORT_SUMMARY+="DISK USAGE OVERVIEW\n"
 REPORT_SUMMARY+="================================\n"
 REPORT_SUMMARY+="GNS3 VM Total Capacity: $TOTAL_DISK_HUMAN\n"
-REPORT_SUMMARY+="Currently In Use:       $USED_DISK_HUMAN ($PERCENTAGE_USED_STR)\n"
+REPORT_SUMMARY+="Currently In Use:        $USED_DISK_HUMAN ($PERCENTAGE_USED_STR)\n"
 REPORT_SUMMARY+="Of which GNS3 projects: $TOTAL_VM_HUMAN\n"
 
-# --- 4. EMAIL LOGIC MET VEILIGHEIDSCHECK ---
+# --- 4. EMAIL LOGIC ---
 
 send_mail() {
     local subject=$1
     local body=$2
 
-    # CRUCIALE CHECK: Voorkom 100% CPU door lege --to
+    # Veiligheidscheck voor Swaks
     if [[ -z "$EMAIL" || "$EMAIL" != *"@fontysict.nl"* ]]; then
-        echo "FOUT: Geen geldig e-mailadres ($EMAIL). Swaks wordt niet uitgevoerd."
+        echo "$(date): FOUT - Ongeldig adres ($EMAIL). Swaks overgeslagen." >> "$LOG_FILE"
         return 1
     fi
 
-    echo "Verzenden naar $EMAIL..."
+    # Verzenden
     swaks --to "$EMAIL" \
           --from "$FROM" \
           --server "$RELAY" \
           --port 25 \
           --header "Subject: $subject" \
           --body "$body" > /dev/null 2>&1
+    
+    if [ $? -eq 0 ]; then
+        echo "$(date): Succesvol gemaild naar $EMAIL (Onderwerp: $subject)" >> "$LOG_FILE"
+    else
+        echo "$(date): FOUT - Swaks kon geen mail sturen naar $EMAIL" >> "$LOG_FILE"
+    fi
 }
 
-# Uitvoering op basis van triggers
+# --- 5. EXECUTION TRIGGERS ---
+
+# Dagelijkse rapportage via cron (--daily flag)
 if [[ "$1" == "--daily" ]]; then
     send_mail "Daily GNS3 Status Report - $(date +%F)" "$REPORT_BODY$REPORT_SUMMARY"
 fi
 
+# Automatische Alert bij overschrijden drempelwaarde
 if [ "$PERCENTAGE_USED" -ge "$THRESHOLD" ]; then
-    send_mail "⚠️ ALERT: GNS3 Disk Space Low ($PERCENTAGE_USED_STR used)" "Warning! Your GNS3 VM has less than 10% free space remaining.\n\n$REPORT_SUMMARY"
+    send_mail "⚠️ ALERT: GNS3 Disk Space Low ($PERCENTAGE_USED_STR used)" "Waarschuwing! De GNS3 VM schijf is voor meer dan $THRESHOLD% vol.\n\n$REPORT_SUMMARY"
 fi
