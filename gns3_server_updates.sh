@@ -11,7 +11,7 @@ SOURCE_SYMBOLS="/home/gns3/GNS3/symbols"
 
 # Bestemming op de student VM's
 DEST_QEMU="/opt/gns3/images/QEMU"
-DEST_SYMBOLS="/opt/gns3/symbols"
+DEST_SYMBOLS="/home/gns3/GNS3/symbols"
 
 LATEST_VERSION="1.2.0"
 GITHUB_URL="https://raw.githubusercontent.com/MarkKlerkx/gns3/refs/heads/main/gns3_monitor.sh"
