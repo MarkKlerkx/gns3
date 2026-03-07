@@ -11,8 +11,11 @@ SOURCE_SYMBOLS="/home/gns3/GNS3/symbols"
 DEST_QEMU="/opt/gns3/images/QEMU"
 DEST_SYMBOLS="/home/gns3/GNS3/symbols"
 
+# Versies voor de scripts en de GUI
 LATEST_VERSION="1.2.0"
+GUI_VERSION="1.2.0"
 GITHUB_URL="https://raw.githubusercontent.com/MarkKlerkx/gns3/refs/heads/main/gns3_monitor.sh"
+GUI_URL="https://raw.githubusercontent.com/MarkKlerkx/gns3/refs/heads/main/GNS3SupportGUI.py"
 
 IMAGES=("TCL_Firefox.qcow2" "pfsense-CE-272-preconfigured.qcow2")
 SYMBOLS=("firefox.svg" "pfSense.svg")
@@ -22,7 +25,7 @@ TEMPLATES_JSON_DATA='{
   "t2": {"name": "pfSense-CE 2.7.2-Preconfigured", "default_name_format": "{name}-{0}", "usage": "Preconfigured pfSense image:\nWAN: DHCP\nLAN01: 192.168.1.0/24\nLAN02: 192.168.2.0/24\n\nBasic firewall rule on LAN02: any any\n\nLogin:\nUsername: admin\nPassword: pfsense\n", "symbol": "pfSense.svg", "category": "guest", "port_name_format": "Ethernet{0}", "port_segment_size": 0, "first_port_name": "", "custom_adapters": [], "qemu_path": "/bin/qemu-system-x86_64", "hda_disk_image": "pfsense-CE-272-preconfigured.qcow2", "hdb_disk_image": "", "hdc_disk_image": "", "hdd_disk_image": "", "hda_disk_interface": "virtio", "hdb_disk_interface": "none", "hdc_disk_interface": "none", "hdd_disk_interface": "none", "cdrom_image": "", "bios_image": "", "boot_priority": "c", "console_type": "vnc", "console_auto_start": false, "ram": 1024, "cpus": 1, "adapters": 6, "adapter_type": "virtio-net-pci", "mac_address": null, "legacy_networking": false, "replicate_network_connection_state": true, "tpm": false, "uefi": false, "create_config_disk": false, "on_close": "power_off", "platform": "", "cpu_throttling": 0, "process_priority": "normal", "options": "-enable-kvm -cpu qemu64", "kernel_image": "", "initrd": "", "kernel_command_line": "", "linked_clone": true, "compute_id": "local", "template_id": "7dcfca65-a804-4ccb-a5c5-4e2972132539", "template_type": "qemu", "builtin": false}
 }'
 
-echo "--- GNS3 Fleet Sync v3.8 ---"
+echo "--- GNS3 Fleet Sync v4.1 ---"
 
 # --- PRE-FLIGHT CHECK ---
 echo "[CHECK] Controleren lokale bestanden op Master VM..."
@@ -47,7 +50,7 @@ for i in {1..254}; do
     # --- STAP 0: CLEANUP ---
     sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$IP" "sudo killall -9 swaks 2>/dev/null"
 
-    # --- STAP 0.5: MONITOR UPDATE (Teruggezet) ---
+    # --- STAP 0.5: MONITOR UPDATE ---
     echo "[STAP 0.5] Controleren gns3_monitor.sh..."
     sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$IP" << EOF
         if [ -f /usr/local/bin/gns3_monitor.sh ]; then
@@ -59,6 +62,45 @@ for i in {1..254}; do
             else
                 echo "  -> OK: Versie is reeds v$LATEST_VERSION"
             fi
+        fi
+EOF
+
+    # --- STAP 0.6: GUI UPDATE (app.py) ---
+    echo "[STAP 0.6] Controleren GNS3SupportGUI (app.py)..."
+    sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$IP" << EOF
+        APP_PATH="/opt/gns3-web/app.py"
+        APP_DIR="/opt/gns3-web"
+        LOG_FILE="/tmp/gns3_gui.log"
+
+        if [ -f "\$APP_PATH" ]; then
+            CURRENT_GUI_V=\$(grep 'VERSION=' "\$APP_PATH" | cut -d'"' -f2)
+        else
+            CURRENT_GUI_V="none"
+        fi
+
+        if [ "\$CURRENT_GUI_V" != "$GUI_VERSION" ]; then
+            echo "  -> UPDATE: GUI v\$CURRENT_GUI_V naar v$GUI_VERSION"
+            sudo pkill -f "\$APP_PATH" 2>/dev/null
+            sudo mkdir -p "\$APP_DIR"
+            sudo wget -q -O "\$APP_PATH" "$GUI_URL"
+            sudo chmod 0755 "\$APP_PATH"
+            sudo chown gns3:gns3 "\$APP_PATH"
+            
+            # Starten en ontkoppelen van SSH sessie
+            (sudo nohup /usr/bin/python3 "\$APP_PATH" > "\$LOG_FILE" 2>&1 &)
+            sleep 1
+            echo "  -> GUI bijgewerkt."
+        else
+            echo "  -> OK: GUI is reeds v$GUI_VERSION"
+        fi
+
+        # Check of het proces daadwerkelijk draait
+        if ps -ef | grep -v grep | grep -q "\$APP_PATH"; then
+            echo "  -> STATUS: Proces draait actief."
+        else
+            echo "  -> WAARSCHUWING: Proces draait NIET. Herstarten..."
+            (sudo nohup /usr/bin/python3 "\$APP_PATH" > "\$LOG_FILE" 2>&1 &)
+            sleep 1
         fi
 EOF
 
