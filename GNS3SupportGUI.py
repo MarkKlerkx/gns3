@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, jsonify
 import os
 import subprocess
 from datetime import datetime
@@ -21,6 +21,14 @@ def get_disk_info():
         return {"total": parts[1], "used": parts[2], "available": parts[3], "percent": parts[4]}
     except:
         return {"total": "?", "used": "?", "available": "?", "percent": "?"}
+
+def get_top_processes():
+    try:
+        # Verhoogd naar 20 regels voor meer overzicht
+        output = subprocess.check_output(['top', '-b', '-n', '1']).decode('utf-8').splitlines()[:20]
+        return "\n".join(output)
+    except:
+        return "Could not retrieve top data."
 
 def get_active_projects():
     project_list = []
@@ -69,12 +77,30 @@ HTML_PAGE = """
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; }
-        .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 550px; text-align: center; }
+        .card { background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 100%; max-width: 600px; text-align: center; }
         h2 { color: #004681; margin-top: 0; margin-bottom: 20px; }
         .section-title { font-weight: bold; color: #495057; margin-bottom: 10px; display: block; border-bottom: 1px solid #dee2e6; padding-bottom: 5px; text-align: left; }
         .info-box { background: #e7f3ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #b3d7ff; }
         .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
         .data-box { background: #f8f9fa; padding: 12px; border-radius: 8px; text-align: left; border: 1px solid #dee2e6; font-size: 0.85em; }
+        
+        /* Verbeterde Top Layout */
+        .top-box { 
+            background: #1e1e1e; 
+            color: #ffffff; 
+            padding: 15px; 
+            border-radius: 8px; 
+            text-align: left; 
+            font-family: 'Consolas', 'Monaco', monospace; 
+            font-size: 0.85em; 
+            line-height: 1.4;
+            white-space: pre; 
+            overflow-x: auto; 
+            overflow-y: auto;
+            max-height: 350px;
+            border: 2px solid #333;
+        }
+
         .project-tag { display: inline-block; background: #004681; color: white; padding: 2px 8px; border-radius: 4px; margin: 2px; font-size: 0.8em; }
         .backup-list { list-style: none; padding: 0; margin: 0; font-size: 0.85em; }
         .backup-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dotted #ccc; align-items: center; }
@@ -83,7 +109,6 @@ HTML_PAGE = """
         .status-badge { font-size: 0.75em; padding: 2px 6px; border-radius: 4px; float: right; }
         .bg-success { background: #d4edda; color: #155724; }
         
-        /* Buttons container */
         .button-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
         .btn-link { display: block; background: #28a745; color: white; padding: 12px; text-decoration: none; border-radius: 6px; font-weight: bold; box-sizing: border-box; text-align: center; }
         .btn-link:hover { background: #218838; }
@@ -98,10 +123,21 @@ HTML_PAGE = """
         .success { background: #d4edda; color: #155724; }
         .error { background: #f8d7da; color: #721c24; }
     </style>
+    <script>
+        function updateTop() {
+            fetch('/top_data')
+                .then(response => response.text())
+                .then(data => {
+                    document.getElementById('top-content').textContent = data;
+                });
+        }
+        setInterval(updateTop, 10000);
+    </script>
 </head>
 <body>
     <div class="card">
         <h2>GNS3 Server Control</h2>
+        
         <div class="info-box">
             <strong>Access IP:</strong> <code style="color: #d63384;">{{ access_ip }}</code><br>
             <div style="margin-top:10px;">
@@ -113,6 +149,7 @@ HTML_PAGE = """
                 {% endfor %}
             </div>
         </div>
+
         <div class="stats-grid">
             <div class="data-box">
                 <span class="section-title">Disk Storage</span>
@@ -128,6 +165,7 @@ HTML_PAGE = """
                 Last backup: <br><strong>{{ backup.last_run }}</strong>
             </div>
         </div>
+
         <div class="data-box" style="margin-bottom: 20px;">
             <span class="section-title">Latest Backups</span>
             <ul class="backup-list">
@@ -158,37 +196,51 @@ HTML_PAGE = """
         <form method="POST" action="/test_mail">
             <button type="submit" class="btn-action btn-test">Send Connectivity Test</button>
         </form>
+
         {% if status %}
             <div class="status-msg {{ 'success' if 'Success' in status else 'error' }}">
                 {{ status }}
             </div>
         {% endif %}
+
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
+
+        <div class="data-box" style="border: none; background: none; padding: 0;">
+            <span class="section-title">Real-time System Load (20 processes)</span>
+            <div class="top-box" id="top-content">{{ top_output }}</div>
+        </div>
     </div>
 </body>
 </html>
 """
 
-@app.route('/', methods=['GET', 'POST'])
+@app.route('/')
 def index():
     access_ip = request.host.split(':')[0]
     disk = get_disk_info()
     backup = get_backup_info()
     active_project_names = get_active_projects()
-    status = request.args.get('status')
+    top_output = get_top_processes()
     
-    if request.method == 'POST':
-        email = request.form.get('email', '').strip()
-        with open(EMAIL_FILE, "w") as f: f.write(email)
-        with open(IP_FILE, "w") as f: f.write(access_ip)
-        os.chown(EMAIL_FILE, 1000, 1000)
-        os.chown(IP_FILE, 1000, 1000)
-        status = "Success: Settings saved!"
-
     current_email = ""
     if os.path.exists(EMAIL_FILE):
         with open(EMAIL_FILE, "r") as f: current_email = f.read().strip()
             
-    return render_template_string(HTML_PAGE, access_ip=access_ip, current_email=current_email, status=status, disk=disk, backup=backup, active_project_names=active_project_names)
+    return render_template_string(HTML_PAGE, access_ip=access_ip, current_email=current_email, disk=disk, backup=backup, active_project_names=active_project_names, top_output=top_output)
+
+@app.route('/top_data')
+def top_data():
+    return get_top_processes()
+
+@app.route('/', methods=['POST'])
+def update_settings():
+    access_ip = request.host.split(':')[0]
+    email = request.form.get('email', '').strip()
+    with open(EMAIL_FILE, "w") as f: f.write(email)
+    with open(IP_FILE, "w") as f: f.write(access_ip)
+    os.chown(EMAIL_FILE, 1000, 1000)
+    os.chown(IP_FILE, 1000, 1000)
+    return index()
 
 @app.route('/test_mail', methods=['POST'])
 def test_mail():
@@ -197,9 +249,8 @@ def test_mail():
         return index()
     with open(EMAIL_FILE, "r") as f: email = f.read().strip()
     cmd = ["swaks", "--to", email, "--from", FROM, "--server", RELAY, "--port", "25", "--header", "Subject: GNS3 Setup Test", "--body", f"Test successful for {access_ip}"]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    status = "Success: Test email sent!" if res.returncode == 0 else "Error: Delivery failed."
-    return render_template_string(HTML_PAGE, access_ip=access_ip, current_email=email, status=status, disk=get_disk_info(), backup=get_backup_info(), active_project_names=get_active_projects())
+    subprocess.run(cmd, capture_output=True, text=True)
+    return index()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
