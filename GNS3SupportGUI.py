@@ -13,6 +13,7 @@ BACKUP_DIR = "/gns-backup"
 BACKUP_SCRIPT = "/usr/local/bin/gns3_backup.sh"
 RELAY = "smtp.educloud.fontysict.nl"
 FROM = "noreply@fontysict.nl"
+VERSION="1.2.0"
 
 def get_disk_info():
     try:
