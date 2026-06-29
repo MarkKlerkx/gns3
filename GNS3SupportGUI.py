@@ -185,8 +185,8 @@ HTML_PAGE = """
         </div>
 
         <div class="button-group">
-            <a href="http://{{ access_ip }}/static/web-ui/server/1/systemstatus" class="btn-link" target="_blank">View System Status</a>
-            <a href="http://{{ access_ip }}/static/web-ui/server/1/projects" class="btn-link" target="_blank">Manage Projects (Web UI)</a>
+            <a href="http://{{ access_ip }}:3080/static/web-ui/server/1/systemstatus" class="btn-link" target="_blank">View System Status</a>
+            <a href="http://{{ access_ip }}:3080/static/web-ui/server/1/projects" class="btn-link" target="_blank">Manage Projects (Web UI)</a>
         </div>
 
         <form method="POST" action="/">
