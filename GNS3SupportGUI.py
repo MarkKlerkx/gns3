@@ -1,6 +1,7 @@
 from flask import Flask, request, render_template_string, jsonify
 import os
 import subprocess
+import re
 from datetime import datetime
 
 app = Flask(__name__)
@@ -25,7 +26,6 @@ def get_disk_info():
 
 def get_top_processes():
     try:
-        # Verhoogd naar 20 regels voor meer overzicht
         output = subprocess.check_output(['top', '-b', '-n', '1']).decode('utf-8').splitlines()[:20]
         return "\n".join(output)
     except:
@@ -70,6 +70,22 @@ def get_backup_info():
             
     return {"files": backups, "last_run": last_run, "active": script_active}
 
+# ── NEW: password validation helper ──────────────────────────────────────────
+def validate_password(pw):
+    """Return (True, '') or (False, error_message)."""
+    if len(pw) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not re.search(r'[A-Z]', pw):
+        return False, "Password must contain at least one uppercase letter."
+    if not re.search(r'[a-z]', pw):
+        return False, "Password must contain at least one lowercase letter."
+    if not re.search(r'\d', pw):
+        return False, "Password must contain at least one number."
+    if not re.search(r'[^A-Za-z0-9]', pw):
+        return False, "Password must contain at least one special character (e.g. !, @, #)."
+    return True, ""
+# ─────────────────────────────────────────────────────────────────────────────
+
 HTML_PAGE = """
 <!DOCTYPE html>
 <html>
@@ -107,7 +123,7 @@ HTML_PAGE = """
         .backup-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px dotted #ccc; align-items: center; }
         .project-label { font-weight: bold; color: #004681; display: block; }
         .file-label { font-size: 0.75em; color: #777; font-family: monospace; }
-        .status-badge { font-size: 0.75em; padding: 2px 6px; border-radius: 4px; float: right; }
+        .-badge { font-size: 0.75em; padding: 2px 6px; border-radius: 4px; float: right; }
         .bg-success { background: #d4edda; color: #155724; }
         
         .button-group { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
@@ -120,9 +136,16 @@ HTML_PAGE = """
         .btn-action { border: none; padding: 10px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.2s; margin-bottom: 8px; }
         .btn-save { background: #004681; color: white; }
         .btn-test { background: #6c757d; color: white; }
-        .status-msg { margin-top: 10px; padding: 8px; border-radius: 6px; font-weight: bold; font-size: 0.85em; text-align: center; }
+        .-msg { margin-top: 10px; padding: 8px; border-radius: 6px; font-weight: bold; font-size: 0.85em; text-align: center; }
         .success { background: #d4edda; color: #155724; }
         .error { background: #f8d7da; color: #721c24; }
+
+        /* ── NEW: password form styles ── */
+        input[type="password"] { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; }
+        .btn-pw { background: #6f42c1; color: white; }
+        .btn-pw:hover { background: #5a32a3; }
+        .pw-hint { font-size: 0.78em; color: #6c757d; background: #f8f9fa; border-left: 3px solid #6f42c1; padding: 6px 10px; border-radius: 0 4px 4px 0; margin-bottom: 10px; }
+        /* ─────────────────────────────── */
     </style>
     <script>
         function updateTop() {
@@ -159,7 +182,7 @@ HTML_PAGE = """
             </div>
             <div class="data-box">
                 <span class="section-title">Backup System
-                    <span class="status-badge {{ 'bg-success' if backup.active else '' }}">
+                    <span class="-badge {{ 'bg-success' if backup.active else '' }}">
                         {{ 'Active' if backup.active else 'Inactive' }}
                     </span>
                 </span>
@@ -185,8 +208,8 @@ HTML_PAGE = """
         </div>
 
         <div class="button-group">
-            <a href="http://{{ access_ip }}:3080/static/web-ui/server/1/systemstatus" class="btn-link" target="_blank">View System Status</a>
-            <a href="http://{{ access_ip }}:3080/static/web-ui/server/1/projects" class="btn-link" target="_blank">Manage Projects (Web UI)</a>
+            <a href="http://{{ access_ip }}/static/web-ui/server/1/systemstatus" class="btn-link" target="_blank">View System Status</a>
+            <a href="http://{{ access_ip }}/static/web-ui/server/1/projects" class="btn-link" target="_blank">Manage Projects (Web UI)</a>
         </div>
 
         <form method="POST" action="/">
@@ -203,6 +226,27 @@ HTML_PAGE = """
                 {{ status }}
             </div>
         {% endif %}
+
+        <!-- ── NEW: change password form ── -->
+        <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
+        <span class="section-title">Change Password (gns3 account)</span>
+        <div class="pw-hint">
+            Password must be at least 8 characters and include an uppercase letter,
+            a lowercase letter, a number, and a special character (e.g. <code>!</code>, <code>@</code>, <code>#</code>).
+        </div>
+        <form method="POST" action="/change_password">
+            <label>New Password:</label>
+            <input type="password" name="new_password" placeholder="Enter new password" required>
+            <label>Confirm Password:</label>
+            <input type="password" name="confirm_password" placeholder="Repeat new password" required>
+            <button type="submit" class="btn-action btn-pw">Change Password</button>
+        </form>
+        {% if pw_status %}
+            <div class="status-msg {{ 'success' if 'Success' in pw_status else 'error' }}">
+                {{ pw_status }}
+            </div>
+        {% endif %}
+        <!-- ─────────────────────────────── -->
 
         <hr style="border: 0; border-top: 1px solid #eee; margin: 25px 0;">
 
@@ -227,7 +271,7 @@ def index():
     if os.path.exists(EMAIL_FILE):
         with open(EMAIL_FILE, "r") as f: current_email = f.read().strip()
             
-    return render_template_string(HTML_PAGE, access_ip=access_ip, current_email=current_email, disk=disk, backup=backup, active_project_names=active_project_names, top_output=top_output)
+    return render_template_string(HTML_PAGE, access_ip=access_ip, current_email=current_email, disk=disk, backup=backup, active_project_names=active_project_names, top_output=top_output, status=None, pw_status=None)
 
 @app.route('/top_data')
 def top_data():
@@ -236,22 +280,74 @@ def top_data():
 @app.route('/', methods=['POST'])
 def update_settings():
     access_ip = request.host.split(':')[0]
+    disk = get_disk_info()
+    backup = get_backup_info()
+    active_project_names = get_active_projects()
+    top_output = get_top_processes()
+    current_email = ""
     email = request.form.get('email', '').strip()
     with open(EMAIL_FILE, "w") as f: f.write(email)
     with open(IP_FILE, "w") as f: f.write(access_ip)
     os.chown(EMAIL_FILE, 1000, 1000)
     os.chown(IP_FILE, 1000, 1000)
-    return index()
+    current_email = email
+    return render_template_string(HTML_PAGE, access_ip=access_ip, current_email=current_email, disk=disk, backup=backup, active_project_names=active_project_names, top_output=top_output, status="Success: Email updated.", pw_status=None)
 
 @app.route('/test_mail', methods=['POST'])
 def test_mail():
     access_ip = request.host.split(':')[0]
-    if not os.path.exists(EMAIL_FILE):
-        return index()
-    with open(EMAIL_FILE, "r") as f: email = f.read().strip()
-    cmd = ["swaks", "--to", email, "--from", FROM, "--server", RELAY, "--port", "25", "--header", "Subject: GNS3 Setup Test", "--body", f"Test successful for {access_ip}"]
-    subprocess.run(cmd, capture_output=True, text=True)
-    return index()
+    disk = get_disk_info()
+    backup = get_backup_info()
+    active_project_names = get_active_projects()
+    top_output = get_top_processes()
+    current_email = ""
+    if os.path.exists(EMAIL_FILE):
+        with open(EMAIL_FILE, "r") as f:
+            current_email = f.read().strip()
+    if current_email:
+        cmd = ["swaks", "--to", current_email, "--from", FROM, "--server", RELAY, "--port", "25", "--header", "Subject: GNS3 Setup Test", "--body", f"Test successful for {access_ip}"]
+        subprocess.run(cmd, capture_output=True, text=True)
+    return render_template_string(HTML_PAGE, access_ip=access_ip, current_email=current_email, disk=disk, backup=backup, active_project_names=active_project_names, top_output=top_output, status="Success: Test email sent." if current_email else "Error: No email address configured.", pw_status=None)
+
+# ── NEW: change password route ────────────────────────────────────────────────
+@app.route('/change_password', methods=['POST'])
+def change_password():
+    access_ip = request.host.split(':')[0]
+    disk = get_disk_info()
+    backup = get_backup_info()
+    active_project_names = get_active_projects()
+    top_output = get_top_processes()
+    current_email = ""
+    if os.path.exists(EMAIL_FILE):
+        with open(EMAIL_FILE, "r") as f:
+            current_email = f.read().strip()
+
+    new_pw = request.form.get('new_password', '')
+    confirm_pw = request.form.get('confirm_password', '')
+
+    if new_pw != confirm_pw:
+        pw_status = "Error: Passwords do not match."
+    else:
+        ok, err = validate_password(new_pw)
+        if not ok:
+            pw_status = f"Error: {err}"
+        else:
+            try:
+                proc = subprocess.run(
+                    ['chpasswd'],
+                    input=f"gns3:{new_pw}",
+                    capture_output=True,
+                    text=True
+                )
+                if proc.returncode == 0:
+                    pw_status = "Success: Password updated."
+                else:
+                    pw_status = f"Error: Could not update password. {proc.stderr.strip()}"
+            except Exception as e:
+                pw_status = f"Error: {str(e)}"
+
+    return render_template_string(HTML_PAGE, access_ip=access_ip, current_email=current_email, disk=disk, backup=backup, active_project_names=active_project_names, top_output=top_output, status=None, pw_status=pw_status)
+# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080)
