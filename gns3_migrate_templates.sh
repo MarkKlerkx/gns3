@@ -1,33 +1,26 @@
 #!/usr/bin/env bash
 
-LOG_FILE="./gns3_migration.log"
+# ==============================================================================
+# GNS3 v2 -> v3.1.x Template Migration Script
+# ==============================================================================
+
+# Alle tijdelijke bestanden en logging gaan naar /tmp (altijd schrijfbaar)
+LOG_FILE="/tmp/gns3_migration.log"
 CACHE_FILE="/tmp/gns3_v2_templates.json"
 RESP_FILE="/tmp/gns3_resp.json"
 
-# Logging helper
-log() {
-    local timestamp
-    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-    echo "[$timestamp] $1" >> "$LOG_FILE"
-}
-
-log_and_print() {
-    echo "$1"
-    log "$1"
-}
-
-# Initialiseer logbestand
-echo "=== GNS3 Migration Run: $(date) ===" >> "$LOG_FILE"
+# Stuur alle stdout en stderr zowel naar het scherm als naar /tmp/gns3_migration.log
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "=================================================="
 echo "   GNS3 v2 -> v3 Template Migration (Bash/curl)   "
 echo "=================================================="
-echo "Log file: ${LOG_FILE}"
+echo "[*] Logging to: $LOG_FILE"
 
 # --- Source Server (Remote v2) ---
 read -rp "Old server IP or hostname: " V2_HOST
 if [ -z "$V2_HOST" ]; then
-    log_and_print "[!] Error: Remote host is required."
+    echo "[!] Remote host is required."
     exit 1
 fi
 
@@ -58,113 +51,67 @@ V3_BASE="http://127.0.0.1:${V3_PORT}"
 V3_TPL_URL="${V3_BASE}/v3/templates"
 V3_LOGIN_URL="${V3_BASE}/v3/access/users/login"
 
-# --- Stap 1: Templates ophalen van oude server ---
-log_and_print ""
-log_and_print "[*] [STAP 1/3] Downloading templates from source: ${V2_URL}..."
+# --- 1. Fetch templates from old v2 server to file ---
+echo ""
+echo "[*] [STEP 1/3] Downloading templates from source: ${V2_URL}..."
 
-V2_AUTH=""
+V2_AUTH_ARGS=()
 if [ -n "$V2_USER" ]; then
-    V2_AUTH="-u ${V2_USER}:${V2_PASS}"
+    V2_AUTH_ARGS=(-u "${V2_USER}:${V2_PASS}")
 fi
 
-curl -s -S $V2_AUTH "$V2_URL" -o "$CACHE_FILE" 2>> "$LOG_FILE"
+curl -s -S "${V2_AUTH_ARGS[@]}" "$V2_URL" -o "$CACHE_FILE"
 
 if [ ! -s "$CACHE_FILE" ] || ! jq -e 'type == "array"' "$CACHE_FILE" >/dev/null 2>&1; then
-    log_and_print "[!] Failed to fetch a valid template array from old server."
+    echo "[!] Failed to fetch a valid template array from old server."
     if [ -f "$CACHE_FILE" ]; then
-        log "[DEBUG] Response head: $(head -n 5 "$CACHE_FILE")"
+        echo "Server response head:"
+        head -n 5 "$CACHE_FILE"
     fi
     exit 1
 fi
 
 TOTAL_COUNT=$(jq '. | length' "$CACHE_FILE")
-log_and_print "[+] Received ${TOTAL_COUNT} templates from old server."
+echo "[+] Successfully downloaded ${TOTAL_COUNT} templates."
 
-# --- Stap 2: Inloggen op lokale v3 controller ---
-AUTH_HEADER=""
-if [[ ! "$DRY_RUN_INPUT" =~ ^[nN]$ ]]; then
-    log_and_print "[*] Dry run selected: skipping v3 authentication."
-else
-    log_and_print ""
-    log_and_print "[*] [STAP 2/3] Authenticating with local v3 server: ${V3_LOGIN_URL}..."
+# --- 2. Authenticate against local v3 ---
+echo ""
+echo "[*] [STEP 2/3] Authenticating with local v3 server..."
+AUTH_HEADER=()
+
+if [[ "$DRY_RUN_INPUT" =~ ^[nN]$ ]]; then
     LOGIN_RESP=$(curl -s -X POST "$V3_LOGIN_URL" \
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "username=${V3_USER}&password=${V3_PASS}")
 
-    TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // .token // empty' 2>/dev/null)
+    TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // .token // empty')
 
     if [ -n "$TOKEN" ]; then
-        AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-        log_and_print "[+] Authentication successful. Bearer token obtained."
-        log "[DEBUG] Token prefix: ${TOKEN:0:15}..."
+        AUTH_HEADER=(-H "Authorization: Bearer ${TOKEN}")
+        echo "[+] Authentication successful (Bearer token acquired)."
     else
-        log_and_print "[!] Login failed on v3 server."
-        log_and_print "Response: $LOGIN_RESP"
+        echo "[!] Login failed on local v3 server."
+        echo "Server response: $LOGIN_RESP"
         exit 1
     fi
+else
+    echo "[*] Skipping authentication step for dry run."
 fi
 
-# --- Stap 3: Templates verwerken en importeren ---
+# --- 3. Process and Migrate templates line-by-line ---
 SUCCESS=0
 SKIPPED=0
 FAILED=0
-COUNTER=0
 
-log_and_print ""
+echo ""
 if [[ "$DRY_RUN_INPUT" =~ ^[nN]$ ]]; then
-    log_and_print "[*] [STAP 3/3] Migrating templates to v3 database..."
+    echo "--- [STEP 3/3] Migrating Templates ---"
 else
-    log_and_print "[*] [STAP 3/3] Dry run simulation (no database writes)..."
+    echo "--- [STEP 3/3] Dry Run (No changes applied) ---"
 fi
 
-# Verwerk templates compact regel voor regel (stream)
-while IFS= read -r CLEAN_TPL; do
-    ((COUNTER++))
-    TPL_NAME=$(echo "$CLEAN_TPL" | jq -r '.name // "Unnamed"')
-    TPL_TYPE=$(echo "$CLEAN_TPL" | jq -r '.template_type // "unknown"')
-    TPL_PLAT=$(echo "$CLEAN_TPL" | jq -r '.platform // empty')
-
-    DETAILS="[${COUNTER}/${TOTAL_COUNT}] '${TPL_NAME}' (Type: ${TPL_TYPE}"
-    [ -n "$TPL_PLAT" ] && DETAILS+=", Platform: ${TPL_PLAT}"
-    DETAILS+=")"
-
-    if [[ ! "$DRY_RUN_INPUT" =~ ^[nN]$ ]]; then
-        log_and_print "[DRY-RUN] ${DETAILS}"
-        continue
-    fi
-
-    log "[START] Submitting ${DETAILS}"
-
-    HTTP_CODE=$(curl -s -o "$RESP_FILE" -w "%{http_code}" \
-        -X POST "$V3_TPL_URL" \
-        -H "Content-Type: application/json" \
-        -H "$AUTH_HEADER" \
-        -d "$CLEAN_TPL")
-
-    case "$HTTP_CODE" in
-        200|201)
-            NEW_ID=$(jq -r '.template_id // empty' "$RESP_FILE" 2>/dev/null)
-            ID_STR=""
-            [ -n "$NEW_ID" ] && ID_STR=" -> ID: ${NEW_ID}"
-            log_and_print "[OK]   ${DETAILS}${ID_STR}"
-            ((SUCCESS++))
-            ;;
-        409)
-            log_and_print "[SKIP] ${DETAILS} (Already exists on server)"
-            ((SKIPPED++))
-            ;;
-        *)
-            log_and_print "[FAIL] ${DETAILS} -> HTTP ${HTTP_CODE}"
-            if [ -s "$RESP_FILE" ]; then
-                ERR_MSG=$(cat "$RESP_FILE")
-                echo "       Error: ${ERR_MSG}"
-                log "[ERROR BODY] ${ERR_MSG}"
-            fi
-            ((FAILED++))
-            ;;
-    esac
-
-done < <(jq -c '.[] 
+# Stream elk template als een compacte JSON-regel
+jq -c '.[] 
     | del(.template_id, .builtin, .status, .path)
     | if .template_type == "qemu" and ((.platform // "") == "") then
         .platform = (
@@ -174,20 +121,41 @@ done < <(jq -c '.[]
             else "x86_64"
             end
         )
-      else . end' "$CACHE_FILE")
+      else . end' "$CACHE_FILE" | while IFS= read -r CLEAN_TPL; do
 
+    TPL_NAME=$(echo "$CLEAN_TPL" | jq -r '.name // "Unnamed"')
+    TPL_TYPE=$(echo "$CLEAN_TPL" | jq -r '.template_type // "unknown"')
+
+    if [[ ! "$DRY_RUN_INPUT" =~ ^[nN]$ ]]; then
+        echo "[DRY-RUN] Found: '${TPL_NAME}' [Type: ${TPL_TYPE}]"
+        continue
+    fi
+
+    HTTP_CODE=$(curl -s -o "$RESP_FILE" -w "%{http_code}" \
+        -X POST "$V3_TPL_URL" \
+        -H "Content-Type: application/json" \
+        "${AUTH_HEADER[@]}" \
+        -d "$CLEAN_TPL")
+
+    if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+        echo "[OK]   Created: '${TPL_NAME}'"
+        ((SUCCESS++))
+    elif [ "$HTTP_CODE" -eq 409 ]; then
+        echo "[SKIP] '${TPL_NAME}' already exists on target."
+        ((SKIPPED++))
+    else
+        echo "[FAIL] Could not import '${TPL_NAME}' (HTTP ${HTTP_CODE})"
+        if [ -f "$RESP_FILE" ]; then
+            jq . "$RESP_FILE" 2>/dev/null || cat "$RESP_FILE"
+            echo ""
+        fi
+        ((FAILED++))
+    fi
+done
+
+# Opruimen van tijdelijke bestanden (logbestand blijft behouden in /tmp)
 rm -f "$RESP_FILE" "$CACHE_FILE"
 
-# --- Samenvatting ---
-log_and_print ""
-log_and_print "================ SUMMARY ================"
-log_and_print " Total processed : ${TOTAL_COUNT}"
-if [[ "$DRY_RUN_INPUT" =~ ^[nN]$ ]]; then
-    log_and_print " Successfully imported: ${SUCCESS}"
-    log_and_print " Skipped (existed)    : ${SKIPPED}"
-    log_and_print " Failed               : ${FAILED}"
-else
-    log_and_print " Dry run completed. No templates were created."
-fi
-log_and_print " Log file saved to    : $(realpath "$LOG_FILE")"
-log_and_print "========================================="
+echo ""
+echo "[*] Migration process finished."
+echo "[*] Detailed log saved to: $LOG_FILE"
