@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -e
 
 echo "=================================================="
 echo "   GNS3 v2 -> v3 Template Migration (Bash/curl)   "
@@ -12,8 +11,8 @@ if [ -z "$V2_HOST" ]; then
     exit 1
 fi
 
-read -rp "Old server port [3080]: " V2_PORT
-V2_PORT=${V2_PORT:-3080}
+read -rp "Old server port [80]: " V2_PORT
+V2_PORT=${V2_PORT:-80}
 
 read -rp "Old server username (press Enter if none): " V2_USER
 if [ -n "$V2_USER" ]; then
@@ -43,19 +42,22 @@ V3_LOGIN_URL="${V3_BASE}/v3/access/users/login"
 echo ""
 echo "[*] Fetching templates from old server: ${V2_URL}..."
 
-V2_CURL_ARGS=(-s -S --fail)
+V2_CURL_ARGS=(-s -S)
 if [ -n "$V2_USER" ]; then
     V2_CURL_ARGS+=(-u "${V2_USER}:${V2_PASS}")
 fi
 
-RAW_TEMPLATES=$(curl "${V2_CURL_ARGS[@]}" "$V2_URL" 2>/dev/null) || {
+RAW_TEMPLATES=$(curl "${V2_CURL_ARGS[@]}" "$V2_URL")
+CURL_STATUS=$?
+
+if [ $CURL_STATUS -ne 0 ] || [ -z "$RAW_TEMPLATES" ]; then
     echo "[!] Failed to connect to old server or fetch templates."
     exit 1
-}
+fi
 
-TOTAL_COUNT=$(echo "$RAW_TEMPLATES" | jq '. | length')
-if [ "$TOTAL_COUNT" -eq 0 ]; then
-    echo "[!] No templates found on the remote server."
+TOTAL_COUNT=$(echo "$RAW_TEMPLATES" | jq '. | length' 2>/dev/null)
+if [ -z "$TOTAL_COUNT" ] || [ "$TOTAL_COUNT" -eq 0 ]; then
+    echo "[!] No templates found or received invalid JSON from remote server."
     exit 0
 fi
 
@@ -71,7 +73,7 @@ else
         -H "Content-Type: application/x-www-form-urlencoded" \
         -d "username=${V3_USER}&password=${V3_PASS}")
 
-    TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // .token // empty')
+    TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // .token // empty' 2>/dev/null)
 
     if [ -n "$TOKEN" ]; then
         AUTH_HEADER=(-H "Authorization: Bearer ${TOKEN}")
@@ -85,6 +87,7 @@ fi
 
 # --- 3. Process and Migrate templates ---
 SUCCESS=0
+SKIPPED=0
 FAILED=0
 
 echo ""
@@ -95,27 +98,24 @@ else
 fi
 
 for ((i=0; i<TOTAL_COUNT; i++)); do
-    # Extract template, strip server-generated keys, and fix empty platform for QEMU
+    # Extract template and fix empty platform safely
     CLEAN_TPL=$(echo "$RAW_TEMPLATES" | jq ".[$i] 
         | del(.template_id, .builtin, .status, .path)
-        | if .template_type == \"qemu\" and (.platform == \"\" or .platform == null) then
+        | if .template_type == \"qemu\" and ((.platform // \"\") == \"\") then
             .platform = (
-                if (.qemu_path // \"\") | test(\"aarch64\") then \"aarch64\"
-                elif (.qemu_path // \"\") | test(\"arm\") then \"arm\"
-                elif (.qemu_path // \"\") | test(\"i386\") then \"i386\"
+                if ((.qemu_path // \"\") | contains(\"aarch64\")) then \"aarch64\"
+                elif ((.qemu_path // \"\") | contains(\"arm\")) then \"arm\"
+                elif ((.qemu_path // \"\") | contains(\"i386\")) then \"i386\"
                 else \"x86_64\"
                 end
             )
-          else . end")
+          else . end" 2>/dev/null)
 
-    TPL_NAME=$(echo "$CLEAN_TPL" | jq -r '.name // "Unnamed"')
-    TPL_TYPE=$(echo "$CLEAN_TPL" | jq -r '.template_type // "unknown"')
-    TPL_PLATFORM=$(echo "$CLEAN_TPL" | jq -r '.platform // empty')
+    TPL_NAME=$(echo "$CLEAN_TPL" | jq -r '.name // "Unnamed"' 2>/dev/null)
+    TPL_TYPE=$(echo "$CLEAN_TPL" | jq -r '.template_type // "unknown"' 2>/dev/null)
 
     if [[ ! "$DRY_RUN_INPUT" =~ ^[nN]$ ]]; then
-        PLAT_INFO=""
-        [ -n "$TPL_PLATFORM" ] && PLAT_INFO=" (platform: $TPL_PLATFORM)"
-        echo "[DRY-RUN] Found: '${TPL_NAME}' [Type: ${TPL_TYPE}${PLAT_INFO}]"
+        echo "[DRY-RUN] Found: '${TPL_NAME}' [Type: ${TPL_TYPE}]"
         continue
     fi
 
@@ -130,6 +130,7 @@ for ((i=0; i<TOTAL_COUNT; i++)); do
         ((SUCCESS++))
     elif [ "$HTTP_CODE" -eq 409 ]; then
         echo "[SKIP] '${TPL_NAME}' already exists on target."
+        ((SKIPPED++))
     else
         echo "[FAIL] Could not import '${TPL_NAME}' (HTTP ${HTTP_CODE})"
         if [ -f /tmp/gns3_resp.json ]; then
@@ -144,7 +145,7 @@ rm -f /tmp/gns3_resp.json
 
 echo ""
 if [[ ! "$DRY_RUN_INPUT" =~ ^[nN]$ ]]; then
-    echo "[*] Dry run complete. Run again and type 'n' to execute the import."
+    echo "[*] Dry run complete. Run again and type 'n' to execute the migration."
 else
-    echo "[*] Done: ${SUCCESS} imported, ${FAILED} failed."
+    echo "[*] Done: ${SUCCESS} created, ${SKIPPED} skipped, ${FAILED} failed."
 fi
